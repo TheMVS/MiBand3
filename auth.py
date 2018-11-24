@@ -1,7 +1,7 @@
 import struct
 import time
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from Crypto.Cipher import AES
 from Queue import Queue, Empty
 from bluepy.btle import Peripheral, DefaultDelegate, ADDR_TYPE_RANDOM, BTLEException
@@ -20,6 +20,8 @@ class AuthenticationDelegate(DefaultDelegate):
 
     def handleNotification(self, hnd, data):
         # Debug purposes
+        # self.device._log.debug("DATA: " + str(data.encode("hex")))
+        # self.device._log.debug("HNd" + str(hnd))
         if hnd == self.device._char_auth.getHandle():
             if data[:3] == b'\x10\x01\x01':
                 self.device._req_rdn()
@@ -46,78 +48,16 @@ class AuthenticationDelegate(DefaultDelegate):
                 self.device.queue.put((QUEUE_TYPES.RAW_ACCEL, data))
             elif len(data) == 16:
                 self.device.queue.put((QUEUE_TYPES.RAW_HEART, data))
-        # The fetch characteristic controls the communication with the activity characteristic.
-        # It can trigger the communication.
-        elif hnd == self.device._char_fetch.getHandle():
-            if data[:3] == b'\x10\x01\x01':
-                # get timestamp from what date the data actually is received
-                year = struct.unpack("<H", data[7:9])[0]
-                month = struct.unpack("b", data[9:10])[0]
-                day = struct.unpack("b", data[10:11])[0]
-                hour = struct.unpack("b", data[11:12])[0]
-                minute = struct.unpack("b", data[12:13])[0]
-                self.device.first_timestamp = datetime(year, month, day, hour, minute)
-                print("Fetch data from {}-{}-{} {}:{}".format(year, month, day, hour, minute))
-                self.device._char_fetch.write(b'\x02', False)
-            elif data[:3] == b'\x10\x02\x01':
-                self.device.active = False
-                return
-            else:
-                print("Unexpected data on handle " + str(hnd) + ": " + str(data.encode("hex")))
-                return
-         # The activity characteristic sends the previews recorded information
-         # from one given timestamp until now.
-        elif hnd == self.device._char_activity.getHandle():
-            if len(data) % 4 is not 1:
-                if self.device.last_timestamp > datetime.now() - timedelta(minutes=1):
-                    self.device.active = False
-                    return
-                print("Trigger more communication")
-                time.sleep(1)
-                t = self.device.last_timestamp + timedelta(minutes=1)
-                self.device.start_get_previews_data(t)
-            else:
-                pkg = self.device.pkg
-                self.device.pkg += 1
-                i = 1
-                while i < len(data):
-                    index = int(pkg) * 4 + (i - 1) / 4
-                    timestamp = self.device.first_timestamp + timedelta(minutes=index)
-                    self.device.last_timestamp = timestamp
-                    category = int.from_bytes(data[i:i + 1], byteorder='little')
-                    intensity = struct.unpack("B", data[i + 1:i + 2])[0]
-                    steps = struct.unpack("B", data[i + 2:i + 3])[0]
-                    heart_rate = struct.unpack("B", data[i + 3:i + 4])[0]
-
-                    print("{}: category: {}; acceleration {}; steps {}; heart rate {};".format(
-                        timestamp.strftime('%d.%m - %H:%M'),
-                        category,
-                        intensity,
-                        steps,
-                        heart_rate)
-                    )
-
-                    i += 4
-
-                    d = datetime.now().replace(second=0, microsecond=0) - timedelta(minutes=1)
-                    if timestamp == d:
-                        self.device.active = False
-                        return
         else:
             self.device._log.error("Unhandled Response " + hex(hnd) + ": " +
                                    str(data.encode("hex")) + " len:" + str(len(data)))
 
 
-class MiBand2(Peripheral):
-    # _KEY = b'\x30\x31\x32\x33\x34\x35\x36\x37\x38\x39\x40\x41\x42\x43\x44\x45'
-    # _send_key_cmd = struct.pack('<18s', b'\x01\x08' + _KEY)
-    # _send_rnd_cmd = struct.pack('<2s', b'\x02\x08')
-    # _send_enc_key = struct.pack('<2s', b'\x03\x08')
-    _KEY = b'\xf5\xd2\x29\x87\x65\x0a\x1d\x82\x05\xab\x82\xbe\xb9\x38\x59\xcf'
-    _send_key_cmd = struct.pack('<18s', b'\x01\x00' + _KEY)
-    _send_rnd_cmd = struct.pack('<2s', b'\x02\x00')
-    _send_enc_key = struct.pack('<2s', b'\x03\x00')
-    pkg = 0
+class MiBand3(Peripheral):
+    _KEY = b'\x01\x23\x45\x67\x89\x01\x22\x23\x34\x45\x56\x67\x78\x89\x90\x02'
+    _send_key_cmd = struct.pack('<18s', b'\x01\x08' + _KEY)
+    _send_rnd_cmd = struct.pack('<2s', b'\x02\x08')
+    _send_enc_key = struct.pack('<2s', b'\x03\x08')
 
     def __init__(self, mac_address, timeout=0.5, debug=False):
         FORMAT = '%(asctime)-15s %(name)s (%(levelname)s) > %(message)s'
@@ -148,15 +88,9 @@ class MiBand2(Peripheral):
         self._char_heart_ctrl = self.svc_heart.getCharacteristics(UUIDS.CHARACTERISTIC_HEART_RATE_CONTROL)[0]
         self._char_heart_measure = self.svc_heart.getCharacteristics(UUIDS.CHARACTERISTIC_HEART_RATE_MEASURE)[0]
 
-        # Recorded information
-        self._char_fetch = self.getCharacteristics(uuid=UUIDS.CHARACTERISTIC_FETCH)[0]
-        self._desc_fetch = self._char_fetch.getDescriptors(forUUID=UUIDS.NOTIFICATION_DESCRIPTOR)[0]
-        self._char_activity = self.getCharacteristics(uuid=UUIDS.CHARACTERISTIC_ACTIVITY_DATA)[0]
-        self._desc_activity = self._char_activity.getDescriptors(forUUID=UUIDS.NOTIFICATION_DESCRIPTOR)[0]
-
         # Enable auth service notifications on startup
         self._auth_notif(True)
-        # Let MiBand2 to settle
+        # Let band to settle
         self.waitForNotifications(0.1)
 
     # Auth helpers ######################################################################
@@ -170,20 +104,6 @@ class MiBand2(Peripheral):
             self._desc_auth.write(b"\x00\x00", True)
         else:
             self._log.error("Something went wrong while changing the Auth Service notifications status...")
-
-    def _auth_previews_data_notif(self, enabled):
-        if enabled:
-            self._log.info("Enabling Fetch Char notifications status...")
-            self._desc_fetch.write(b"\x01\x00", True)
-            self._log.info("Enabling Activity Char notifications status...")
-            self._desc_activity.write(b"\x01\x00", True)
-        elif not enabled:
-            self._log.info("Disabling Fetch Char notifications status...")
-            self._desc_fetch.write(b"\x00\x00", True)
-            self._log.info("Disabling Activity Char notifications status...")
-            self._desc_activity.write(b"\x00\x00", True)
-        else:
-            self._log.error("Something went wrong while changing the Fetch and Activity notifications status...")
 
     def _encrypt(self, message):
         aes = AES.new(self._KEY, AES.MODE_ECB)
@@ -213,12 +133,6 @@ class MiBand2(Peripheral):
         for i in xrange(3):
             g = struct.unpack('hhh', bytes[2 + i * 6:8 + i * 6])
             res.append({'x': g[0], 'y': g[1], 'wtf': g[2]})
-        # WTF
-        # if len(bytes) == 20 and struct.unpack('b', bytes[0])[0] == 2:
-        #     print struct.unpack('B', bytes[1])
-        #     print "Accel x: %s y: %s z: %s" % struct.unpack('hhh', bytes[2:8])
-        #     print "Accel x: %s y: %s z: %s" % struct.unpack('hhh', bytes[8:14])
-        #     print "Accel x: %s y: %s z: %s" % struct.unpack('hhh', bytes[14:])
         return res
 
     def _parse_raw_heart(self, bytes):
@@ -243,11 +157,6 @@ class MiBand2(Peripheral):
         status = 'normal' if struct.unpack('b', bytes[2])[0] == 0 else "charging"
         datetime_last_charge = self._parse_date(bytes[11:18])
         datetime_last_off = self._parse_date(bytes[3:10])
-
-        # WTF?
-        # struct.unpack('b', bytes[10])
-        # struct.unpack('b', bytes[18])
-        # print struct.unpack('b', bytes[10]), struct.unpack('b', bytes[18])
 
         res = {
             "status": status,
@@ -387,20 +296,41 @@ class MiBand2(Peripheral):
         char = svc.getCharacteristics(UUIDS.CHARACTERISTIC_ALERT)[0]
         char.write(_type)
 
-    def get_heart_rate_one_time(self):
-        # stop continous
-        self._char_heart_ctrl.write(b'\x15\x01\x00', True)
-        # stop manual
-        self._char_heart_ctrl.write(b'\x15\x02\x00', True)
-        # start manual
-        self._char_heart_ctrl.write(b'\x15\x02\x01', True)
-        res = None
-        while not res:
-            self.waitForNotifications(self.timeout)
-            res = self._get_from_queue(QUEUE_TYPES.HEART)
+    def send_custom_alert(self, type):
+        if type == 5:
+            base_value = '\x05\x01'
+        elif type == 4:
+            base_value = '\x04\x01'
+        elif type == 3:
+                base_value = '\x03\x01'
+        print('Phone Call')
+        phone = raw_input('Sender Name or Caller ID')
+        svc = self.getServiceByUUID(UUIDS.SERVICE_ALERT_NOTIFICATION)
+        char = svc.getCharacteristics(UUIDS.CHARACTERISTIC_CUSTOM_ALERT)[0]
+        char.write(base_value+phone, withResponse=True)
 
-        rate = struct.unpack('bb', res)[1]
-        return rate
+    def change_date(self):
+        print('Change date and time')
+        svc = self.getServiceByUUID(UUIDS.SERVICE_MIBAND1)
+        char = svc.getCharacteristics(UUIDS.CHARACTERISTIC_CURRENT_TIME)[0]
+        # date = raw_input('Enter the date in dd-mm-yyyy format\n')
+        # time = raw_input('Enter the time in HH:MM:SS format\n')
+        #
+        # day = int(date[:2])
+        # month = int(date[3:5])
+        # year = int(date[6:10])
+        # fraction = year / 256
+        # rem = year % 256
+        #
+        # hour = int(time[:2])
+        # minute = int(time[3:5])
+        # seconds =  int(time[6:])
+        #
+        # write_val =  format(rem, '#04x') + format(fraction, '#04x') + format(month, '#04x') + format(day, '#04x') + format(hour, '#04x') + format(minute, '#04x') + format(seconds, '#04x') + format(5, '#04x') + format(0, '#04x') + format(0, '#04x') +'0x16'
+        # write_val = write_val.replace('0x', '\\x')
+        # print(write_val)
+        char.write('\xe2\x07\x01\x1e\x00\x00\x00\x00\x00\x00\x16', withResponse=True)
+        raw_input('Date Changed, press any key to continue')
 
     def start_heart_rate_realtime(self, heart_measure_callback):
         char_m = self.svc_heart.getCharacteristics(UUIDS.CHARACTERISTIC_HEART_RATE_MEASURE)[0]
@@ -424,93 +354,3 @@ class MiBand2(Peripheral):
             if (time.time() - t) >= 12:
                 char_ctrl.write(b'\x16', True)
                 t = time.time()
-
-    def start_raw_data_realtime(self, heart_measure_callback=None, heart_raw_callback=None, accel_raw_callback=None):
-        char_m = self.svc_heart.getCharacteristics(UUIDS.CHARACTERISTIC_HEART_RATE_MEASURE)[0]
-        char_d = char_m.getDescriptors(forUUID=UUIDS.NOTIFICATION_DESCRIPTOR)[0]
-        char_ctrl = self.svc_heart.getCharacteristics(UUIDS.CHARACTERISTIC_HEART_RATE_CONTROL)[0]
-
-        if heart_measure_callback:
-            self.heart_measure_callback = heart_measure_callback
-        if heart_raw_callback:
-            self.heart_raw_callback = heart_raw_callback
-        if accel_raw_callback:
-            self.accel_raw_callback = accel_raw_callback
-
-        char_sensor = self.svc_1.getCharacteristics(UUIDS.CHARACTERISTIC_SENSOR)[0]
-        # char_sens_d = char_sensor1.getDescriptors(forUUID=UUIDS.NOTIFICATION_DESCRIPTOR)[0]
-
-        # char_sensor2 = self.svc_1.getCharacteristics('000000010000351221180009af100700')[0]
-        # char_sens_d2 = char_sensor2.getDescriptors(forUUID=UUIDS.NOTIFICATION_DESCRIPTOR)[0]
-
-        # char_sensor3 = self.svc_1.getCharacteristics('000000070000351221180009af100700')[0]
-        # char_sens_d3 = char_sensor3.getDescriptors(forUUID=UUIDS.NOTIFICATION_DESCRIPTOR)[0]
-
-        # char_sens_d1.write(b'\x01\x00', True)
-        # char_sens_d2.write(b'\x01\x00', True)
-        # char_sensor2.write(b'\x01\x03\x19')
-        # char_sens_d2.write(b'\x00\x00', True)
-        # char_d.write(b'\x01\x00', True)
-        # char_ctrl.write(b'\x15\x01\x01', True)
-        # char_sensor2.write(b'\x02')
-
-        # stop heart monitor continues & manual
-        char_ctrl.write(b'\x15\x02\x00', True)
-        char_ctrl.write(b'\x15\x01\x00', True)
-        # WTF
-        # char_sens_d1.write(b'\x01\x00', True)
-        # enabling accelerometer & heart monitor raw data notifications
-        char_sensor.write(b'\x01\x03\x19')
-        # IMO: enablee heart monitor notifications
-        char_d.write(b'\x01\x00', True)
-        # start hear monitor continues
-        char_ctrl.write(b'\x15\x01\x01', True)
-        # WTF
-        char_sensor.write(b'\x02')
-        t = time.time()
-        while True:
-            self.waitForNotifications(0.5)
-            self._parse_queue()
-            # send ping request every 12 sec
-            if (time.time() - t) >= 12:
-                char_ctrl.write(b'\x16', True)
-                t = time.time()
-
-    def stop_realtime(self):
-        char_m = self.svc_heart.getCharacteristics(UUIDS.CHARACTERISTIC_HEART_RATE_MEASURE)[0]
-        char_d = char_m.getDescriptors(forUUID=UUIDS.NOTIFICATION_DESCRIPTOR)[0]
-        char_ctrl = self.svc_heart.getCharacteristics(UUIDS.CHARACTERISTIC_HEART_RATE_CONTROL)[0]
-
-        char_sensor1 = self.svc_1.getCharacteristics(UUIDS.CHARACTERISTIC_HZ)[0]
-        char_sens_d1 = char_sensor1.getDescriptors(forUUID=UUIDS.NOTIFICATION_DESCRIPTOR)[0]
-
-        char_sensor2 = self.svc_1.getCharacteristics(UUIDS.CHARACTERISTIC_SENSOR)[0]
-
-        # stop heart monitor continues
-        char_ctrl.write(b'\x15\x01\x00', True)
-        char_ctrl.write(b'\x15\x01\x00', True)
-        # IMO: stop heart monitor notifications
-        char_d.write(b'\x00\x00', True)
-        # WTF
-        char_sensor2.write(b'\x03')
-        # IMO: stop notifications from sensors
-        char_sens_d1.write(b'\x00\x00', True)
-
-        self.heart_measure_callback = None
-        self.heart_raw_callback = None
-        self.accel_raw_callback = None
-
-    def start_get_previews_data(self, start_timestamp):
-        self._auth_previews_data_notif(True)
-        self.waitForNotifications(0.1)
-        print("Trigger activity communication")
-        year = struct.pack("<H", start_timestamp.year)
-        month = struct.pack("<H", start_timestamp.month)[0]
-        day = struct.pack("<H", start_timestamp.day)[0]
-        hour = struct.pack("<H", start_timestamp.hour)[0]
-        minute = struct.pack("<H", start_timestamp.minute)[0]
-        ts = year + month + day + hour + minute
-        trigger = b'\x01\x01' + ts + b'\x00\x08'
-        self._char_fetch.write(trigger, False)
-        self.active = True
-
