@@ -239,15 +239,13 @@ class MiBand3(Peripheral):
         svc = self.getServiceByUUID(UUIDS.SERVICE_DEVICE_INFO)
         char = svc.getCharacteristics(UUIDS.CHARACTERISTIC_REVISION)[0]
         data = char.read()
-        revision = struct.unpack('9s', data[-9:])[0] if len(data) == 9 else None
-        return revision
+        return data
 
     def get_hrdw_revision(self):
         svc = self.getServiceByUUID(UUIDS.SERVICE_DEVICE_INFO)
         char = svc.getCharacteristics(UUIDS.CHARACTERISTIC_HRDW_REVISION)[0]
         data = char.read()
-        revision = struct.unpack('8s', data[-8:])[0] if len(data) == 8 else None
-        return revision
+        return data
 
     def set_encoding(self, encoding="en_US"):
         char = self.svc_1.getCharacteristics(UUIDS.CHARACTERISTIC_CONFIGURATION)[0]
@@ -303,7 +301,6 @@ class MiBand3(Peripheral):
             base_value = '\x04\x01'
         elif type == 3:
                 base_value = '\x03\x01'
-        print('Phone Call')
         phone = raw_input('Sender Name or Caller ID')
         svc = self.getServiceByUUID(UUIDS.SERVICE_ALERT_NOTIFICATION)
         char = svc.getCharacteristics(UUIDS.CHARACTERISTIC_CUSTOM_ALERT)[0]
@@ -331,6 +328,50 @@ class MiBand3(Peripheral):
         # print(write_val)
         char.write('\xe2\x07\x01\x1e\x00\x00\x00\x00\x00\x00\x16', withResponse=True)
         raw_input('Date Changed, press any key to continue')
+
+    def resourceUpdate(self):
+        print('Update Resource')
+        svc = self.getServiceByUUID(UUIDS.SERVICE_DFU_FIRMWARE)
+        char = svc.getCharacteristics(UUIDS.CHARACTERISTIC_DFU_FIRMWARE)[0]
+        char.write("\x01\xef\x95\x01\x02", withResponse=True)
+        char.write("\x03", withResponse=True)
+        char1 = svc.getCharacteristics(UUIDS.CHARACTERISTIC_DFU_FIRMWARE_WRITE)[0]
+        with open("Mili_wuhan.res") as f:
+          while True:
+            c = f.read(20) #takes 20 bytes :D
+            if not c:
+              print "Update Over"
+              break
+            print('Writing Resource', c.encode('hex'))
+            char1.write(c)
+        # after update is done send these values
+        char.write(b'\x00', withResponse=True)
+        self.waitForNotifications(0.5)
+        char.write(b'\x04\x21\x07', withResponse=True)
+        print('Update Complete')
+
+    def dfuUpdate(self):
+        print('Update Firmware')
+        svc = self.getServiceByUUID(UUIDS.SERVICE_DFU_FIRMWARE)
+        char = svc.getCharacteristics(UUIDS.CHARACTERISTIC_DFU_FIRMWARE)[0]
+        char.write("\x01\xac\xef\x05", withResponse=True)
+        char.write("\x03", withResponse=True)
+        char1 = svc.getCharacteristics(UUIDS.CHARACTERISTIC_DFU_FIRMWARE_WRITE)[0]
+        with open("Mili_wuhan.fw") as f:
+          while True:
+            c = f.read(20) #takes 20 bytes :D
+            if not c:
+              print "Update Over"
+              break
+            print('Writing Firmware', c.encode('hex'))
+            char1.write(c)
+        # after update is done send these values
+        char.write(b'\x00', withResponse=True)
+        self.waitForNotifications(0.5)
+        char.write(b'\x04\x98\xe9', withResponse=True)
+        self.waitForNotifications(0.5)
+        char.write(b'\x05', withResponse=False)
+        print('Update Complete')
 
     def start_heart_rate_realtime(self, heart_measure_callback):
         char_m = self.svc_heart.getCharacteristics(UUIDS.CHARACTERISTIC_HEART_RATE_MEASURE)[0]

@@ -43,6 +43,9 @@ def change_date():
 MAC_ADDR = sys.argv[1]
 print 'Attempting to connect to ', MAC_ADDR
 
+def updateFirmware():
+    band.dfuUpdate()
+
 band = MiBand3(MAC_ADDR, debug=True)
 band.setSecurityLevel(level = "medium")
 
@@ -54,6 +57,9 @@ if len(sys.argv) > 2:
     sys.exit(0)
 else:
     band.authenticate()
+
+print('Updating firmware')
+# updateFirmware()
 
 menu = CursesMenu("MiBand MAC: " + MAC_ADDR, "Select an option")
 detail_menu = FunctionItem("View Band Detail info", detail_info)
