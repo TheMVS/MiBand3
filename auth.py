@@ -6,6 +6,7 @@ from Crypto.Cipher import AES
 from Queue import Queue, Empty
 from bluepy.btle import Peripheral, DefaultDelegate, ADDR_TYPE_RANDOM, BTLEException
 import crc16
+import os
 
 from constants import UUIDS, AUTH_STATES, ALERT_TYPES, QUEUE_TYPES
 
@@ -327,15 +328,35 @@ class MiBand3(Peripheral):
         # print(write_val)
         char.write('\xe2\x07\x01\x1e\x00\x00\x00\x00\x00\x00\x16', withResponse=True)
         raw_input('Date Changed, press any key to continue')
-    def resourceUpdate(self):
+    def dfuUpdate(self, fileName):
         print('Update Resource')
         svc = self.getServiceByUUID(UUIDS.SERVICE_DFU_FIRMWARE)
         char = svc.getCharacteristics(UUIDS.CHARACTERISTIC_DFU_FIRMWARE)[0]
-        char.write("\x01\xef\x95\x01\x02", withResponse=True)
+        extension = os.path.splitext(fileName)[1][1:]
+        if extension.lower() == "res":
+            char.write("\x01\xef\x95\x01\x02", withResponse=True)
+        elif extension.lower() == "fw":
+            char.write("\x01\xac\xef\x05", withResponse=True)
         char.write("\x03", withResponse=True)
         char1 = svc.getCharacteristics(UUIDS.CHARACTERISTIC_DFU_FIRMWARE_WRITE)[0]
-        crc = 0
-        with open("Mili_wuhan.res") as f:
+        # calculating crc checksum of firmware
+        crc = 0xFFFF
+        with open(fileName) as f:
+            while True:
+                c = f.read(1)
+                if not c:
+                    break
+                cInt = int(c.encode('hex'), 16) #converting hex to int
+                # now calculate crc
+                crc = ((crc >> 8) | (crc << 8)) & 0xFFFF
+                crc ^= (cInt & 0xff)
+                crc ^= ((crc & 0xff) >> 4)
+                crc ^= (crc << 12) & 0xFFFF
+                crc ^= ((crc & 0xFF) << 5) & 0xFFFFFF
+        crc &= 0xFFFF
+        print('CRC Value is-->', crc)
+        raw_input('Press Enter to Continue')
+        with open(fileName) as f:
           while True:
             c = f.read(20) #takes 20 bytes :D
             if not c:
@@ -343,21 +364,20 @@ class MiBand3(Peripheral):
               break
             print('Writing Resource', c.encode('hex'))
             char1.write(c)
-            crc = crc16.crc16xmodem(c, crc)
-        print(crc)
-        raw_input()
         # after update is done send these values
         char.write(b'\x00', withResponse=True)
         self.waitForNotifications(0.5)
-        char.write(b'\x04\xA9\xCB', withResponse=True)
+        print('CheckSum is --> ', crc & 0xFF, (crc >> 8) & 0xFF)
+        # CheckSum =
+        char.write(b'\x04'+hex(crc & 0xFF)+hex((crc >> 8) & 0xFF), withResponse=True)
         print('Update Complete')
+        raw_input('Press Enter to Continue')
 
     # def dfuUpdate(self):
     #     print('Update Firmware')
     #     svc = self.getServiceByUUID(UUIDS.SERVICE_DFU_FIRMWARE)
     #     char = svc.getCharacteristics(UUIDS.CHARACTERISTIC_DFU_FIRMWARE)[0]
-    #     char.write("\x01\xac\xef\x05", withResponse=True)
-    #     char.write("\x03", withResponse=True)
+    #
     #     char1 = svc.getCharacteristics(UUIDS.CHARACTERISTIC_DFU_FIRMWARE_WRITE)[0]
     #     crc = 0
     #     with open("Mili_wuhan.fw") as f:

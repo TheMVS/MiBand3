@@ -44,7 +44,8 @@ MAC_ADDR = sys.argv[1]
 print 'Attempting to connect to ', MAC_ADDR
 
 def updateFirmware():
-    band.resourceUpdate()
+    fileName = raw_input('Enter the file Name with Extension\n')
+    band.dfuUpdate(fileName)
 
 band = MiBand3(MAC_ADDR, debug=True)
 band.setSecurityLevel(level = "medium")
