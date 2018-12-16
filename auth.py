@@ -356,11 +356,9 @@ class MiBand3(Peripheral):
             # file size hex value is
             char.write('\x01'+ struct.pack("<i", fileSize)[:-1] +'\x02', withResponse=True)
         elif extension.lower() == "fw":
-            char.write('\x01' + chr(fileSize[-2:])+ chr(fileSize[-4:][:-2]) + chr(fileSize[-6:][:-4]), withResponse=True)
-        raw_input('Correct?')
+            char.write('\x01' + struct.pack("<i", fileSize)[:-1], withResponse=True)
         char.write("\x03", withResponse=True)
         char1 = svc.getCharacteristics(UUIDS.CHARACTERISTIC_DFU_FIRMWARE_WRITE)[0]
-
         with open(fileName) as f:
           while True:
             c = f.read(20) #takes 20 bytes :D
@@ -377,7 +375,7 @@ class MiBand3(Peripheral):
         char.write(checkSum, withResponse=True)
         if extension.lower() == "fw":
             self.waitForNotifications(0.5)
-            char.write('\x05')
+            char.write('\x05', withResponse=True)
         print('Update Complete')
         raw_input('Press Enter to Continue')
     def start_heart_rate_realtime(self, heart_measure_callback):
