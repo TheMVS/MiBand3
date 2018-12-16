@@ -7,6 +7,7 @@ from Queue import Queue, Empty
 from bluepy.btle import Peripheral, DefaultDelegate, ADDR_TYPE_RANDOM, BTLEException
 import crc16
 import os
+import struct
 
 from constants import UUIDS, AUTH_STATES, ALERT_TYPES, QUEUE_TYPES
 
@@ -329,16 +330,11 @@ class MiBand3(Peripheral):
         char.write('\xe2\x07\x01\x1e\x00\x00\x00\x00\x00\x00\x16', withResponse=True)
         raw_input('Date Changed, press any key to continue')
     def dfuUpdate(self, fileName):
-        print('Update Resource')
+        print('Update Firmware/Resource')
         svc = self.getServiceByUUID(UUIDS.SERVICE_DFU_FIRMWARE)
         char = svc.getCharacteristics(UUIDS.CHARACTERISTIC_DFU_FIRMWARE)[0]
         extension = os.path.splitext(fileName)[1][1:]
-        if extension.lower() == "res":
-            char.write("\x01\xef\x95\x01\x02", withResponse=True)
-        elif extension.lower() == "fw":
-            char.write("\x01\xac\xef\x05", withResponse=True)
-        char.write("\x03", withResponse=True)
-        char1 = svc.getCharacteristics(UUIDS.CHARACTERISTIC_DFU_FIRMWARE_WRITE)[0]
+        fileSize = os.path.getsize(fileName)
         # calculating crc checksum of firmware
         crc = 0xFFFF
         with open(fileName) as f:
@@ -356,6 +352,15 @@ class MiBand3(Peripheral):
         crc &= 0xFFFF
         print('CRC Value is-->', crc)
         raw_input('Press Enter to Continue')
+        if extension.lower() == "res":
+            # file size hex value is
+            char.write('\x01'+ struct.pack("<i", fileSize)[:-1] +'\x02', withResponse=True)
+        elif extension.lower() == "fw":
+            char.write('\x01' + chr(fileSize[-2:])+ chr(fileSize[-4:][:-2]) + chr(fileSize[-6:][:-4]), withResponse=True)
+        raw_input('Correct?')
+        char.write("\x03", withResponse=True)
+        char1 = svc.getCharacteristics(UUIDS.CHARACTERISTIC_DFU_FIRMWARE_WRITE)[0]
+
         with open(fileName) as f:
           while True:
             c = f.read(20) #takes 20 bytes :D
@@ -367,39 +372,14 @@ class MiBand3(Peripheral):
         # after update is done send these values
         char.write(b'\x00', withResponse=True)
         self.waitForNotifications(0.5)
-        print('CheckSum is --> ', crc & 0xFF, (crc >> 8) & 0xFF)
-        # CheckSum =
-        char.write(b'\x04'+hex(crc & 0xFF)+hex((crc >> 8) & 0xFF), withResponse=True)
+        print('CheckSum is --> ', hex(crc & 0xFF), hex((crc >> 8) & 0xFF))
+        checkSum = b'\x04' + chr(crc & 0xFF) + chr((crc >> 8) & 0xFF)
+        char.write(checkSum, withResponse=True)
+        if extension.lower() == "fw":
+            self.waitForNotifications(0.5)
+            char.write('\x05')
         print('Update Complete')
         raw_input('Press Enter to Continue')
-
-    # def dfuUpdate(self):
-    #     print('Update Firmware')
-    #     svc = self.getServiceByUUID(UUIDS.SERVICE_DFU_FIRMWARE)
-    #     char = svc.getCharacteristics(UUIDS.CHARACTERISTIC_DFU_FIRMWARE)[0]
-    #
-    #     char1 = svc.getCharacteristics(UUIDS.CHARACTERISTIC_DFU_FIRMWARE_WRITE)[0]
-    #     crc = 0
-    #     with open("Mili_wuhan.fw") as f:
-    #       while True:
-    #         c = f.read(20) #takes 20 bytes :D
-    #         if not c:
-    #           print "Update Over"
-    #           break
-    #         print('Writing Firmware', c.encode('hex'))
-    #         char1.write(c)
-    #         crc = crc16.crc16xmodem(c, crc)
-    #     print(crc)
-        # after update is done send these values
-        char.write(b'\x00', withResponse=True)
-        self.waitForNotifications(2)
-        char.write(b'\x04\x06\xa6')
-        self.waitForNotifications(2)
-        char.write(b'\x05', withResponse=False)
-        self.waitForNotifications(2)
-        raw_input()
-        print('Update Complete')
-
     def start_heart_rate_realtime(self, heart_measure_callback):
         char_m = self.svc_heart.getCharacteristics(UUIDS.CHARACTERISTIC_HEART_RATE_MEASURE)[0]
         char_d = char_m.getDescriptors(forUUID=UUIDS.NOTIFICATION_DESCRIPTOR)[0]
