@@ -21,9 +21,6 @@ class AuthenticationDelegate(DefaultDelegate):
         self.device = device
 
     def handleNotification(self, hnd, data):
-        # Debug purposes
-        # self.device._log.debug("DATA: " + str(data.encode("hex")))
-        # self.device._log.debug("HNd" + str(hnd))
         if hnd == self.device._char_auth.getHandle():
             if data[:3] == b'\x10\x01\x01':
                 self.device._req_rdn()
@@ -378,25 +375,76 @@ class MiBand3(Peripheral):
             char.write('\x05', withResponse=True)
         print('Update Complete')
         raw_input('Press Enter to Continue')
-    def start_heart_rate_realtime(self, heart_measure_callback):
-        char_m = self.svc_heart.getCharacteristics(UUIDS.CHARACTERISTIC_HEART_RATE_MEASURE)[0]
-        char_d = char_m.getDescriptors(forUUID=UUIDS.NOTIFICATION_DESCRIPTOR)[0]
-        char_ctrl = self.svc_heart.getCharacteristics(UUIDS.CHARACTERISTIC_HEART_RATE_CONTROL)[0]
+    def start_raw_data_realtime(self, heart_measure_callback=None, heart_raw_callback=None, accel_raw_callback=None):
+            char_m = self.svc_heart.getCharacteristics(UUIDS.CHARACTERISTIC_HEART_RATE_MEASURE)[0]
+            char_d = char_m.getDescriptors(forUUID=UUIDS.NOTIFICATION_DESCRIPTOR)[0]
+            char_ctrl = self.svc_heart.getCharacteristics(UUIDS.CHARACTERISTIC_HEART_RATE_CONTROL)[0]
 
-        self.heart_measure_callback = heart_measure_callback
+            if heart_measure_callback:
+                self.heart_measure_callback = heart_measure_callback
+            if heart_raw_callback:
+                self.heart_raw_callback = heart_raw_callback
+            if accel_raw_callback:
+                self.accel_raw_callback = accel_raw_callback
 
-        # stop heart monitor continues & manual
-        char_ctrl.write(b'\x15\x02\x00', True)
-        char_ctrl.write(b'\x15\x01\x00', True)
-        # enable heart monitor notifications
-        char_d.write(b'\x01\x00', True)
-        # start hear monitor continues
-        char_ctrl.write(b'\x15\x01\x01', True)
-        t = time.time()
-        while True:
-            self.waitForNotifications(0.5)
-            self._parse_queue()
-            # send ping request every 12 sec
-            if (time.time() - t) >= 12:
-                char_ctrl.write(b'\x16', True)
-                t = time.time()
+            char_sensor = self.svc_1.getCharacteristics(UUIDS.CHARACTERISTIC_SENSOR)[0]
+
+            # stop heart monitor continues & manual
+            char_ctrl.write(b'\x15\x02\x00', True)
+            char_ctrl.write(b'\x15\x01\x00', True)
+            # WTF
+            # char_sens_d1.write(b'\x01\x00', True)
+            # enabling accelerometer & heart monitor raw data notifications
+            char_sensor.write(b'\x01\x03\x19')
+            # IMO: enablee heart monitor notifications
+            char_d.write(b'\x01\x00', True)
+            # start hear monitor continues
+            char_ctrl.write(b'\x15\x01\x01', True)
+            # WTF
+            char_sensor.write(b'\x02')
+            t = time.time()
+            while True:
+                self.waitForNotifications(0.5)
+                self._parse_queue()
+                # send ping request every 12 sec
+                if (time.time() - t) >= 12:
+                    char_ctrl.write(b'\x16', True)
+                    t = time.time()
+
+    def stop_realtime(self):
+            char_m = self.svc_heart.getCharacteristics(UUIDS.CHARACTERISTIC_HEART_RATE_MEASURE)[0]
+            char_d = char_m.getDescriptors(forUUID=UUIDS.NOTIFICATION_DESCRIPTOR)[0]
+            char_ctrl = self.svc_heart.getCharacteristics(UUIDS.CHARACTERISTIC_HEART_RATE_CONTROL)[0]
+
+            char_sensor1 = self.svc_1.getCharacteristics(UUIDS.CHARACTERISTIC_HZ)[0]
+            char_sens_d1 = char_sensor1.getDescriptors(forUUID=UUIDS.NOTIFICATION_DESCRIPTOR)[0]
+
+            char_sensor2 = self.svc_1.getCharacteristics(UUIDS.CHARACTERISTIC_SENSOR)[0]
+
+            # stop heart monitor continues
+            char_ctrl.write(b'\x15\x01\x00', True)
+            char_ctrl.write(b'\x15\x01\x00', True)
+            # IMO: stop heart monitor notifications
+            char_d.write(b'\x00\x00', True)
+            # WTF
+            char_sensor2.write(b'\x03')
+            # IMO: stop notifications from sensors
+            char_sens_d1.write(b'\x00\x00', True)
+
+            self.heart_measure_callback = None
+            self.heart_raw_callback = None
+            self.accel_raw_callback = None
+
+    def start_get_previews_data(self, start_timestamp):
+            self._auth_previews_data_notif(True)
+            self.waitForNotifications(0.1)
+            print("Trigger activity communication")
+            year = struct.pack("<H", start_timestamp.year)
+            month = struct.pack("<H", start_timestamp.month)[0]
+            day = struct.pack("<H", start_timestamp.day)[0]
+            hour = struct.pack("<H", start_timestamp.hour)[0]
+            minute = struct.pack("<H", start_timestamp.minute)[0]
+            ts = year + month + day + hour + minute
+            trigger = b'\x01\x01' + ts + b'\x00\x08'
+            self._char_fetch.write(trigger, False)
+            self.active = True
