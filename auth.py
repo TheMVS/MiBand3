@@ -333,6 +333,7 @@ class MiBand3(Peripheral):
         extension = os.path.splitext(fileName)[1][1:]
         fileSize = os.path.getsize(fileName)
         # calculating crc checksum of firmware
+        #crc16
         crc = 0xFFFF
         with open(fileName) as f:
             while True:
