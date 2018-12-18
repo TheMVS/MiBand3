@@ -1,5 +1,5 @@
 # MiBand3
-Library to work with Xiaomi MiBand 3
+Library to work with Xiaomi MiBand 3 copied from https://github.com/yogeshojha/MiBand3.git for testing.
 
 Base lib provided by Leo Soares
 Additional debug & fixes was made by Volodymyr Shymanskyy
